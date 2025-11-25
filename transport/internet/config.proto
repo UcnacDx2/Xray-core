@@ -142,6 +142,7 @@ message DesyncConfig {
   bool enabled = 1;
   int32 ttl = 2;
   bytes payload = 3;
+  int64 delay = 4;
 }
 
 message HappyEyeballsConfig {

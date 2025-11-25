@@ -5,56 +5,17 @@ package tcp
 
 import (
 	"net"
-	"runtime"
-	"sync"
+	"time"
 
-	"github.com/google/gopacket"
-	"github.com/google/gopacket/layers"
 	"github.com/xtls/xray-core/common/errors"
 	"github.com/xtls/xray-core/transport/internet"
 	"golang.org/x/sys/unix"
 )
 
-var (
-	desyncEnabled bool
-	desyncOnce    sync.Once
-)
-
-func checkPermissions() bool {
-	desyncOnce.Do(func() {
-		if runtime.GOOS != "linux" {
-			desyncEnabled = false
-			return
-		}
-		fd, err := unix.Socket(unix.AF_INET, unix.SOCK_RAW, unix.IPPROTO_RAW)
-		if err != nil {
-			desyncEnabled = false
-			return
-		}
-		unix.Close(fd)
-		desyncEnabled = true
-	})
-	return desyncEnabled
-}
-
 func performDesync(conn net.Conn, config *internet.DesyncConfig) error {
-	if !checkPermissions() {
-		return errors.New("CAP_NET_RAW capability is required for desync feature")
-	}
-
 	tcpConn, ok := conn.(*net.TCPConn)
 	if !ok {
 		return errors.New("not a TCP connection")
-	}
-
-	localAddr, ok := tcpConn.LocalAddr().(*net.TCPAddr)
-	if !ok {
-		return errors.New("failed to get local address")
-	}
-
-	remoteAddr, ok := tcpConn.RemoteAddr().(*net.TCPAddr)
-	if !ok {
-		return errors.New("failed to get remote address")
 	}
 
 	rawConn, err := tcpConn.SyscallConn()
@@ -62,70 +23,57 @@ func performDesync(conn net.Conn, config *internet.DesyncConfig) error {
 		return errors.New("failed to get raw connection").Base(err)
 	}
 
-	var (
-		seq, ack uint32
-		tcpWin   uint16
-	)
+	var ttl int
+	var ttlErr error
+	var fd int
 
-	err = rawConn.Control(func(fd uintptr) {
-		seq, ack, tcpWin = getTCPInfo(fd)
+	err = rawConn.Control(func(rawFd uintptr) {
+		fd = int(rawFd)
+		ttl, ttlErr = unix.GetsockoptInt(fd, unix.IPPROTO_IP, unix.IP_TTL)
 	})
 
 	if err != nil {
-		return errors.New("failed to get tcp info").Base(err)
+		return errors.New("failed to get raw connection control").Base(err)
+	}
+	if ttlErr != nil {
+		return errors.New("failed to get IP_TTL").Base(ttlErr)
 	}
 
-	ipLayer := &layers.IPv4{
-		Version:  4,
-		TTL:      uint8(config.Ttl),
-		Protocol: layers.IPProtocolTCP,
-		SrcIP:    localAddr.IP,
-		DstIP:    remoteAddr.IP,
-	}
+	defer rawConn.Control(func(rawFd uintptr) {
+		unix.SetsockoptInt(int(rawFd), unix.IPPROTO_IP, unix.IP_TTL, ttl)
+	})
 
-	tcpLayer := &layers.TCP{
-		SrcPort: layers.TCPPort(localAddr.Port),
-		DstPort: layers.TCPPort(remoteAddr.Port),
-		Seq:     seq,
-		Ack:     ack,
-		Window:  tcpWin,
-		ACK:     true,
-		PSH:     true,
-	}
+	err = rawConn.Control(func(rawFd uintptr) {
+		ttlErr = unix.SetsockoptInt(int(rawFd), unix.IPPROTO_IP, unix.IP_TTL, int(config.Ttl))
+	})
 
-	tcpLayer.SetNetworkLayerForChecksum(ipLayer)
-
-	buf := gopacket.NewSerializeBuffer()
-	opts := gopacket.SerializeOptions{
-		ComputeChecksums: true,
-		FixLengths:       true,
-	}
-	if err := gopacket.SerializeLayers(buf, opts, ipLayer, tcpLayer, gopacket.Payload(config.Payload)); err != nil {
-		return errors.New("failed to serialize layers").Base(err)
-	}
-
-	fd, err := unix.Socket(unix.AF_INET, unix.SOCK_RAW, unix.IPPROTO_RAW)
 	if err != nil {
-		return errors.New("failed to create raw socket").Base(err)
+		return errors.New("failed to get raw connection control").Base(err)
 	}
-	defer unix.Close(fd)
+	if ttlErr != nil {
+		return errors.New("failed to set IP_TTL").Base(ttlErr)
+	}
 
-	addr := unix.SockaddrInet4{
-		Port: 0,
-		Addr: [4]byte{},
+	var p [2]int
+	pipeErr := unix.Pipe(p[:])
+	if pipeErr != nil {
+		return errors.New("failed to create pipe").Base(pipeErr)
 	}
-	copy(addr.Addr[:], remoteAddr.IP.To4())
+	defer unix.Close(p[0])
+	defer unix.Close(p[1])
 
-	if err := unix.Sendto(fd, buf.Bytes(), 0, &addr); err != nil {
-		return errors.New("failed to send raw packet").Base(err)
+	iov := unix.Iovec{Base: &config.Payload[0], Len: uint64(len(config.Payload))}
+	_, pipeErr = unix.Vmsplice(p[1], []unix.Iovec{iov}, 0)
+	if pipeErr != nil {
+		return errors.New("failed to vmsplice").Base(pipeErr)
 	}
+
+	_, pipeErr = unix.Splice(p[0], nil, fd, nil, len(config.Payload), unix.SPLICE_F_GIFT)
+	if pipeErr != nil {
+		return errors.New("failed to splice").Base(pipeErr)
+	}
+
+	time.Sleep(time.Duration(config.Delay) * time.Millisecond)
 
 	return nil
-}
-func getTCPInfo(fd uintptr) (seq uint32, ack uint32, win uint16) {
-	info, err := unix.GetsockoptTCPInfo(int(fd), unix.IPPROTO_TCP, unix.TCP_INFO)
-	if err != nil {
-		return 1, 1, 8192
-	}
-	return info.Unacked, info.Rcv_ssthresh, uint16(info.Rcv_wnd)
 }

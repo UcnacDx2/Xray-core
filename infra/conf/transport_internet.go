@@ -794,6 +794,7 @@ type DesyncConfig struct {
 	Enabled bool   `json:"enabled"`
 	TTL     int32  `json:"ttl"`
 	Payload string `json:"payload"`
+	Delay   int64  `json:"delay"`
 }
 
 type SocketConfig struct {
@@ -952,6 +953,7 @@ func (c *SocketConfig) Build() (*internet.SocketConfig, error) {
 				Enabled: c.Desync.Enabled,
 				Ttl:     c.Desync.TTL,
 				Payload: []byte(c.Desync.Payload),
+				Delay:   c.Desync.Delay,
 			}
 		}
 	}

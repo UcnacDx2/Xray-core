@@ -3,7 +3,6 @@ package scenarios
 import (
 	"context"
 	"net/http"
-	"os"
 	"testing"
 	"time"
 
@@ -11,9 +10,11 @@ import (
 	"golang.org/x/net/proxy"
 
 	"github.com/xtls/xray-core/app/dispatcher"
+	"github.com/xtls/xray-core/app/dns"
 	"github.com/xtls/xray-core/app/proxyman"
 	_ "github.com/xtls/xray-core/app/proxyman/inbound"
 	_ "github.com/xtls/xray-core/app/proxyman/outbound"
+	"github.com/xtls/xray-core/app/router"
 	"github.com/xtls/xray-core/common/net"
 	"github.com/xtls/xray-core/common/serial"
 	"github.com/xtls/xray-core/core"
@@ -22,15 +23,7 @@ import (
 	"github.com/xtls/xray-core/transport/internet"
 )
 
-// TestDesyncFreedomGoogle tests the desync feature with a real Google server.
-// This test requires root privileges to run, as it uses raw sockets.
-// To run this test, use the following command:
-// sudo go test -v ./testing/scenarios/... -run TestDesyncFreedomGoogle
-func TestDesyncFreedomGoogle(t *testing.T) {
-	if os.Geteuid() != 0 {
-		t.Skip("this test requires root privileges")
-	}
-
+func TestDesyncFreedomThreads(t *testing.T) {
 	config := &core.Config{
 		Inbound: []*core.InboundHandlerConfig{
 			{
@@ -55,18 +48,57 @@ func TestDesyncFreedomGoogle(t *testing.T) {
 					StreamSettings: &internet.StreamConfig{
 						SocketSettings: &internet.SocketConfig{
 							TcpKeepAliveInterval: 100,
-							Mark:                 255,
 							Desync: &internet.DesyncConfig{
 								Enabled: true,
 								Ttl:     2,
-								Payload: []byte("GET / HTTP/1.1\r\nHost: example.com\r\n\r\n"),
+								Payload: []byte("\x16\x03\x01\x00\xac\x01\x00\x00\xa8\x03\x03"),
+								Delay:   10,
 							},
 						},
 					},
 				}),
 			},
+			{
+				Tag: "direct-out",
+				ProxySettings: serial.ToTypedMessage(&freedom.Config{
+					DomainStrategy: internet.DomainStrategy_USE_IP,
+				}),
+			},
 		},
 		App: []*serial.TypedMessage{
+			serial.ToTypedMessage(&dns.Config{
+				NameServer: []*dns.NameServer{
+					{
+						Address: &net.Endpoint{
+							Network: net.Network_UDP,
+							Address: &net.IPOrDomain{
+								Address: &net.IPOrDomain_Domain{
+									Domain: "https://77.88.8.8/dns-query",
+								},
+							},
+						},
+					},
+				},
+			}),
+			serial.ToTypedMessage(&router.Config{
+				Rule: []*router.RoutingRule{
+					{
+						TargetTag: &router.RoutingRule_Tag{
+							Tag: "direct-out",
+						},
+						Geoip: []*router.GeoIP{
+							{
+								Cidr: []*router.CIDR{
+									{
+										Ip:     []byte{77, 88, 8, 8},
+										Prefix: 32,
+									},
+								},
+							},
+						},
+					},
+				},
+			}),
 			serial.ToTypedMessage(&dispatcher.Config{}),
 			serial.ToTypedMessage(&proxyman.InboundConfig{}),
 			serial.ToTypedMessage(&proxyman.OutboundConfig{}),
@@ -92,7 +124,11 @@ func TestDesyncFreedomGoogle(t *testing.T) {
 		Timeout: 30 * time.Second,
 	}
 
-	resp, err := httpClient.Get("https://www.google.com")
+	resp, err := httpClient.Get("https://www.threads.com")
+	assert.NoError(t, err)
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+
+	resp, err = httpClient.Get("https://v2ex.com")
 	assert.NoError(t, err)
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
 }
