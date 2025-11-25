@@ -733,6 +733,7 @@ type DesyncConfig struct {
 	Enabled       bool                   `protobuf:"varint,1,opt,name=enabled,proto3" json:"enabled,omitempty"`
 	Ttl           int32                  `protobuf:"varint,2,opt,name=ttl,proto3" json:"ttl,omitempty"`
 	Payload       []byte                 `protobuf:"bytes,3,opt,name=payload,proto3" json:"payload,omitempty"`
+	Delay         int64                  `protobuf:"varint,4,opt,name=delay,proto3" json:"delay,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }

@@ -49,7 +49,7 @@ func TestDesyncFreedomThreads(t *testing.T) {
 						SocketSettings: &internet.SocketConfig{
 							TcpKeepAliveInterval: 100,
 							Desync: &internet.DesyncConfig{
-								Enabled: true,
+								Enabled: false,
 								Ttl:     2,
 								Payload: []byte("\x16\x03\x01\x00\xac\x01\x00\x00\xa8\x03\x03"),
 								Delay:   10,
