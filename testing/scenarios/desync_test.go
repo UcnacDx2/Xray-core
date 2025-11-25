@@ -3,6 +3,7 @@ package scenarios
 import (
 	"context"
 	"net/http"
+	"os"
 	"testing"
 	"time"
 
@@ -26,6 +27,10 @@ import (
 // To run this test, use the following command:
 // sudo go test -v ./testing/scenarios/... -run TestDesyncFreedomGoogle
 func TestDesyncFreedomGoogle(t *testing.T) {
+	if os.Geteuid() != 0 {
+		t.Skip("this test requires root privileges")
+	}
+
 	config := &core.Config{
 		Inbound: []*core.InboundHandlerConfig{
 			{
