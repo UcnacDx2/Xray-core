@@ -1,3 +1,6 @@
+//go:build linux
+// +build linux
+
 package tcp
 
 import (
@@ -119,7 +122,6 @@ func performDesync(conn net.Conn, config *internet.DesyncConfig) error {
 
 	return nil
 }
-
 func getTCPInfo(fd uintptr) (seq uint32, ack uint32, win uint16) {
 	if runtime.GOOS != "linux" {
 		return 1, 1, 8192
