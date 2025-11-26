@@ -1,0 +1,224 @@
+package scenarios
+
+import (
+	"context"
+	nethttp "net/http"
+	"testing"
+	"time"
+
+	"github.com/stretchr/testify/assert"
+	"golang.org/x/net/proxy"
+
+	"github.com/xtls/xray-core/app/dispatcher"
+	"github.com/xtls/xray-core/app/dns"
+	"github.com/xtls/xray-core/app/proxyman"
+	_ "github.com/xtls/xray-core/app/proxyman/inbound"
+	_ "github.com/xtls/xray-core/app/proxyman/outbound"
+	"github.com/xtls/xray-core/app/router"
+	"github.com/xtls/xray-core/common/net"
+	"github.com/xtls/xray-core/common/serial"
+	"github.com/xtls/xray-core/core"
+	"github.com/xtls/xray-core/proxy/freedom"
+	inbound_http "github.com/xtls/xray-core/proxy/http"
+	"github.com/xtls/xray-core/proxy/socks"
+	"github.com/xtls/xray-core/transport/internet"
+)
+
+func TestDesyncFreedomThreads(t *testing.T) {
+	config := &core.Config{
+		Inbound: []*core.InboundHandlerConfig{
+			{
+				Tag: "socks-in-fragment",
+				ReceiverSettings: serial.ToTypedMessage(&proxyman.ReceiverConfig{
+					PortList: &net.PortList{Range: []*net.PortRange{{From: 10808, To: 10808}}},
+					Listen:    &net.IPOrDomain{Address: &net.IPOrDomain_Ip{Ip: []byte{127, 0, 0, 1}}},
+				}),
+				ProxySettings: serial.ToTypedMessage(&socks.ServerConfig{
+					AuthType: socks.AuthType_NO_AUTH,
+					UdpEnabled: true,
+				}),
+			},
+			{
+				Tag: "socks-in-desync",
+				ReceiverSettings: serial.ToTypedMessage(&proxyman.ReceiverConfig{
+					PortList: &net.PortList{Range: []*net.PortRange{{From: 10809, To: 10809}}},
+					Listen:    &net.IPOrDomain{Address: &net.IPOrDomain_Ip{Ip: []byte{127, 0, 0, 1}}},
+				}),
+				ProxySettings: serial.ToTypedMessage(&socks.ServerConfig{
+					AuthType: socks.AuthType_NO_AUTH,
+					UdpEnabled: true,
+				}),
+			},
+			{
+				Tag: "http-in",
+				ReceiverSettings: serial.ToTypedMessage(&proxyman.ReceiverConfig{
+					PortList: &net.PortList{Range: []*net.PortRange{{From: 8080, To: 8080}}},
+					Listen:    &net.IPOrDomain{Address: &net.IPOrDomain_Ip{Ip: []byte{127, 0, 0, 1}}},
+				}),
+				ProxySettings: serial.ToTypedMessage(&inbound_http.ServerConfig{}),
+			},
+		},
+		Outbound: []*core.OutboundHandlerConfig{
+			{
+				Tag: "fragment-only-out",
+				ProxySettings: serial.ToTypedMessage(&freedom.Config{
+					DomainStrategy: internet.DomainStrategy_USE_IP,
+				}),
+				SenderSettings: serial.ToTypedMessage(&proxyman.SenderConfig{
+					StreamSettings: &internet.StreamConfig{
+						SocketSettings: &internet.SocketConfig{
+							TcpKeepAliveInterval: 100,
+							Desync: &internet.DesyncConfig{
+								Enabled: true,
+								Ttl:     2,
+							},
+						},
+					},
+				}),
+			},
+			{
+				Tag: "fragment-and-desync-out",
+				ProxySettings: serial.ToTypedMessage(&freedom.Config{
+					DomainStrategy: internet.DomainStrategy_USE_IP,
+				}),
+				SenderSettings: serial.ToTypedMessage(&proxyman.SenderConfig{
+					StreamSettings: &internet.StreamConfig{
+						SocketSettings: &internet.SocketConfig{
+							TcpKeepAliveInterval: 100,
+							Desync: &internet.DesyncConfig{
+								Enabled:     true,
+								Ttl:         2,
+								SendPayload: true,
+								Payload:     []byte("GET / HTTP/1.1\r\nHost: www.baidu.com\r\n\r\n"),
+								Delay:       10,
+							},
+						},
+					},
+				}),
+			},
+			{
+				Tag: "direct-out",
+				ProxySettings: serial.ToTypedMessage(&freedom.Config{
+					DomainStrategy: internet.DomainStrategy_USE_IP,
+				}),
+			},
+		},
+		App: []*serial.TypedMessage{
+			serial.ToTypedMessage(&dns.Config{
+				NameServer: []*dns.NameServer{
+					{
+						Address: &net.Endpoint{
+							Network: net.Network_UDP,
+							Address: &net.IPOrDomain{
+								Address: &net.IPOrDomain_Domain{
+									Domain: "https://77.88.8.8/dns-query",
+								},
+							},
+						},
+					},
+				},
+			}),
+			serial.ToTypedMessage(&router.Config{
+				Rule: []*router.RoutingRule{
+					{
+						InboundTag: []string{"socks-in-fragment"},
+						TargetTag: &router.RoutingRule_Tag{
+							Tag: "fragment-only-out",
+						},
+					},
+					{
+						InboundTag: []string{"socks-in-no-desync"},
+						TargetTag: &router.RoutingRule_Tag{
+							Tag: "direct-out",
+						},
+					},
+					{
+						InboundTag: []string{"http-in"},
+						TargetTag: &router.RoutingRule_Tag{
+							Tag: "fragment-and-desync-out",
+						},
+					},
+					{
+						TargetTag: &router.RoutingRule_Tag{
+							Tag: "direct-out",
+						},
+						Geoip: []*router.GeoIP{
+							{
+								Cidr: []*router.CIDR{
+									{
+										Ip:     []byte{77, 88, 8, 8},
+										Prefix: 32,
+									},
+								},
+							},
+						},
+					},
+				},
+			}),
+			serial.ToTypedMessage(&dispatcher.Config{}),
+			serial.ToTypedMessage(&proxyman.InboundConfig{}),
+			serial.ToTypedMessage(&proxyman.OutboundConfig{}),
+		},
+	}
+
+	instance, err := core.New(config)
+	assert.NoError(t, err)
+
+	err = instance.Start()
+	assert.NoError(t, err)
+	defer instance.Close()
+
+	dialerFragment, err := proxy.SOCKS5("tcp", "127.0.0.1:10808", nil, proxy.Direct)
+	assert.NoError(t, err)
+
+	dialerDesync, err := proxy.SOCKS5("tcp", "127.0.0.1:10809", nil, proxy.Direct)
+	assert.NoError(t, err)
+
+	httpClientFragment := &nethttp.Client{
+		Transport: &nethttp.Transport{
+			DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
+				return dialerFragment.Dial(network, addr)
+			},
+		},
+		Timeout: 30 * time.Second,
+	}
+
+	httpClientDesync := &nethttp.Client{
+		Transport: &nethttp.Transport{
+			DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
+				return dialerDesync.Dial(network, addr)
+			},
+		},
+		Timeout: 30 * time.Second,
+	}
+
+	urls := []string{
+		"https://threads.net",
+		"https://v2ex.com",
+		"https://linux.do",
+	}
+
+	var lastErr error
+	success := false
+	for _, url := range urls {
+		_, err := httpClientFragment.Get(url)
+		if err == nil {
+			success = true
+			continue
+		}
+
+		_, err = httpClientDesync.Get(url)
+		if err == nil {
+			success = true
+			continue
+		}
+		lastErr = err
+	}
+
+	assert.True(t, success, lastErr)
+
+	if *keepProxyAlive {
+		t.Log("Proxy is running on port 10808 (fragment), 10809 (desync), and 8080 (HTTP). Press Ctrl+C to exit.")
+		select {}
+	}
+}
