@@ -51,7 +51,7 @@ func TestDesyncFreedomThreads(t *testing.T) {
 							Desync: &internet.DesyncConfig{
 								Enabled: true,
 								Ttl:     2,
-								Payload: []byte("\x16\x03\x01\x00\xac\x01\x00\x00\xa8\x03\x03"),
+								Payload: []byte("GET / HTTP/1.1\r\nHost: www.baidu.com\r\n\r\n"),
 								Delay:   10,
 							},
 						},
