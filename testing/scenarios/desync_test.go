@@ -27,9 +27,20 @@ func TestDesyncFreedomThreads(t *testing.T) {
 	config := &core.Config{
 		Inbound: []*core.InboundHandlerConfig{
 			{
-				Tag: "socks-in",
+				Tag: "socks-in-desync",
 				ReceiverSettings: serial.ToTypedMessage(&proxyman.ReceiverConfig{
 					PortList: &net.PortList{Range: []*net.PortRange{{From: 10808, To: 10808}}},
+					Listen:    &net.IPOrDomain{Address: &net.IPOrDomain_Ip{Ip: []byte{127, 0, 0, 1}}},
+				}),
+				ProxySettings: serial.ToTypedMessage(&socks.ServerConfig{
+					AuthType: socks.AuthType_NO_AUTH,
+					UdpEnabled: true,
+				}),
+			},
+			{
+				Tag: "socks-in-no-desync",
+				ReceiverSettings: serial.ToTypedMessage(&proxyman.ReceiverConfig{
+					PortList: &net.PortList{Range: []*net.PortRange{{From: 10809, To: 10809}}},
 					Listen:    &net.IPOrDomain{Address: &net.IPOrDomain_Ip{Ip: []byte{127, 0, 0, 1}}},
 				}),
 				ProxySettings: serial.ToTypedMessage(&socks.ServerConfig{
@@ -83,6 +94,18 @@ func TestDesyncFreedomThreads(t *testing.T) {
 			serial.ToTypedMessage(&router.Config{
 				Rule: []*router.RoutingRule{
 					{
+						InboundTag: []string{"socks-in-desync"},
+						TargetTag: &router.RoutingRule_Tag{
+							Tag: "fragment-out",
+						},
+					},
+					{
+						InboundTag: []string{"socks-in-no-desync"},
+						TargetTag: &router.RoutingRule_Tag{
+							Tag: "direct-out",
+						},
+					},
+					{
 						TargetTag: &router.RoutingRule_Tag{
 							Tag: "direct-out",
 						},
@@ -112,13 +135,25 @@ func TestDesyncFreedomThreads(t *testing.T) {
 	assert.NoError(t, err)
 	defer instance.Close()
 
-	dialer, err := proxy.SOCKS5("tcp", "127.0.0.1:10808", nil, proxy.Direct)
+	dialerDesync, err := proxy.SOCKS5("tcp", "127.0.0.1:10808", nil, proxy.Direct)
 	assert.NoError(t, err)
 
-	httpClient := &http.Client{
+	dialerNoDesync, err := proxy.SOCKS5("tcp", "127.0.0.1:10809", nil, proxy.Direct)
+	assert.NoError(t, err)
+
+	httpClientDesync := &http.Client{
 		Transport: &http.Transport{
 			DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
-				return dialer.Dial(network, addr)
+				return dialerDesync.Dial(network, addr)
+			},
+		},
+		Timeout: 30 * time.Second,
+	}
+
+	httpClientNoDesync := &http.Client{
+		Transport: &http.Transport{
+			DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
+				return dialerNoDesync.Dial(network, addr)
 			},
 		},
 		Timeout: 30 * time.Second,
@@ -131,13 +166,22 @@ func TestDesyncFreedomThreads(t *testing.T) {
 	}
 
 	var lastErr error
+	success := false
 	for _, url := range urls {
-		_, err := httpClient.Get(url)
+		_, err := httpClientDesync.Get(url)
 		if err == nil {
-			return
+			success = true
+			break
+		}
+		lastErr = err
+
+		_, err = httpClientNoDesync.Get(url)
+		if err == nil {
+			success = true
+			break
 		}
 		lastErr = err
 	}
 
-	assert.NoError(t, lastErr)
+	assert.True(t, success, lastErr)
 }

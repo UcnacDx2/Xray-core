@@ -17,17 +17,11 @@ import (
 )
 
 // Dial dials a new TCP connection to the given destination.
-func dialInternal(ctx context.Context, dest net.Destination, streamSettings *internet.MemoryStreamConfig) (stat.Connection, error) {
+func Dial(ctx context.Context, dest net.Destination, streamSettings *internet.MemoryStreamConfig) (stat.Connection, error) {
 	errors.LogInfo(ctx, "dialing TCP to ", dest)
 	conn, err := internet.DialSystem(ctx, dest, streamSettings.SocketSettings)
 	if err != nil {
 		return nil, err
-	}
-
-	if streamSettings.SocketSettings != nil && streamSettings.SocketSettings.Desync != nil && streamSettings.SocketSettings.Desync.Enabled {
-		if err := performDesync(conn, streamSettings.SocketSettings.Desync); err != nil {
-			return nil, errors.New("failed to perform desync").Base(err)
-		}
 	}
 
 	if config := tls.ConfigFromStreamSettings(streamSettings); config != nil {
@@ -111,22 +105,6 @@ func dialInternal(ctx context.Context, dest net.Destination, streamSettings *int
 		conn = auth.Client(conn)
 	}
 	return stat.Connection(conn), nil
-}
-
-func Dial(ctx context.Context, dest net.Destination, streamSettings *internet.MemoryStreamConfig) (stat.Connection, error) {
-	conn, err := dialInternal(ctx, dest, streamSettings)
-	if err != nil && streamSettings.SocketSettings != nil && streamSettings.SocketSettings.Desync != nil && streamSettings.SocketSettings.Desync.Enabled {
-		if strings.Contains(err.Error(), "tls: error decoding message") {
-			newStreamSettings := *streamSettings
-			newSocketSettings := *newStreamSettings.SocketSettings
-			newDesyncConfig := *newSocketSettings.Desync
-			newDesyncConfig.Enabled = false
-			newSocketSettings.Desync = &newDesyncConfig
-			newStreamSettings.SocketSettings = &newSocketSettings
-			return dialInternal(ctx, dest, &newStreamSettings)
-		}
-	}
-	return conn, err
 }
 
 func init() {
