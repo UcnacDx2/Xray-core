@@ -2,7 +2,7 @@ package scenarios
 
 import (
 	"context"
-	"net/http"
+	nethttp "net/http"
 	"testing"
 	"time"
 
@@ -19,6 +19,7 @@ import (
 	"github.com/xtls/xray-core/common/serial"
 	"github.com/xtls/xray-core/core"
 	"github.com/xtls/xray-core/proxy/freedom"
+	inbound_http "github.com/xtls/xray-core/proxy/http"
 	"github.com/xtls/xray-core/proxy/socks"
 	"github.com/xtls/xray-core/transport/internet"
 )
@@ -47,6 +48,14 @@ func TestDesyncFreedomThreads(t *testing.T) {
 					AuthType: socks.AuthType_NO_AUTH,
 					UdpEnabled: true,
 				}),
+			},
+			{
+				Tag: "http-in",
+				ReceiverSettings: serial.ToTypedMessage(&proxyman.ReceiverConfig{
+					PortList: &net.PortList{Range: []*net.PortRange{{From: 8080, To: 8080}}},
+					Listen:    &net.IPOrDomain{Address: &net.IPOrDomain_Ip{Ip: []byte{127, 0, 0, 1}}},
+				}),
+				ProxySettings: serial.ToTypedMessage(&inbound_http.ServerConfig{}),
 			},
 		},
 		Outbound: []*core.OutboundHandlerConfig{
@@ -118,7 +127,13 @@ func TestDesyncFreedomThreads(t *testing.T) {
 						},
 					},
 					{
-						InboundTag: []string{"socks-in-desync"},
+						InboundTag: []string{"socks-in-no-desync"},
+						TargetTag: &router.RoutingRule_Tag{
+							Tag: "direct-out",
+						},
+					},
+					{
+						InboundTag: []string{"http-in"},
 						TargetTag: &router.RoutingRule_Tag{
 							Tag: "fragment-and-desync-out",
 						},
@@ -159,8 +174,8 @@ func TestDesyncFreedomThreads(t *testing.T) {
 	dialerDesync, err := proxy.SOCKS5("tcp", "127.0.0.1:10809", nil, proxy.Direct)
 	assert.NoError(t, err)
 
-	httpClientFragment := &http.Client{
-		Transport: &http.Transport{
+	httpClientFragment := &nethttp.Client{
+		Transport: &nethttp.Transport{
 			DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
 				return dialerFragment.Dial(network, addr)
 			},
@@ -168,8 +183,8 @@ func TestDesyncFreedomThreads(t *testing.T) {
 		Timeout: 30 * time.Second,
 	}
 
-	httpClientDesync := &http.Client{
-		Transport: &http.Transport{
+	httpClientDesync := &nethttp.Client{
+		Transport: &nethttp.Transport{
 			DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
 				return dialerDesync.Dial(network, addr)
 			},
@@ -203,7 +218,7 @@ func TestDesyncFreedomThreads(t *testing.T) {
 	assert.True(t, success, lastErr)
 
 	if *keepProxyAlive {
-		t.Log("Proxy is running on port 10808 (desync) and 10809 (no desync). Press Ctrl+C to exit.")
+		t.Log("Proxy is running on port 10808 (fragment), 10809 (desync), and 8080 (HTTP). Press Ctrl+C to exit.")
 		select {}
 	}
 }
