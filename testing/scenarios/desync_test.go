@@ -160,7 +160,7 @@ func TestDesyncFreedomThreads(t *testing.T) {
 	}
 
 	urls := []string{
-		"https://threada.net",
+		"https://threads.net",
 		"https://v2ex.com",
 		"https://linux.do",
 	}
@@ -171,14 +171,13 @@ func TestDesyncFreedomThreads(t *testing.T) {
 		_, err := httpClientDesync.Get(url)
 		if err == nil {
 			success = true
-			break
+			continue
 		}
-		lastErr = err
 
 		_, err = httpClientNoDesync.Get(url)
 		if err == nil {
 			success = true
-			break
+			continue
 		}
 		lastErr = err
 	}
