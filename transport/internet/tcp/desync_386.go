@@ -1,5 +1,5 @@
-//go:build linux
-// +build linux
+//go:build linux && 386
+// +build linux,386
 
 package tcp
 
@@ -67,8 +67,8 @@ func performDesync(conn net.Conn, config *internet.DesyncConfig) error {
 		cut = len(config.Payload)
 	}
 	iovs := []unix.Iovec{
-		{Base: &config.Payload[0], Len: uint64(cut)},
-		{Base: &config.Payload[cut], Len: uint64(len(config.Payload) - cut)},
+		{Base: &config.Payload[0], Len: uint32(cut)},
+		{Base: &config.Payload[cut], Len: uint32(len(config.Payload) - cut)},
 	}
 
 	for _, iov := range iovs {
