@@ -10,6 +10,7 @@ var (
 )
 
 func TestMain(m *testing.M) {
+	flag.Parse()
 	genTestBinaryPath()
 	defer testBinaryCleanFn()
 
