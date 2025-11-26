@@ -201,4 +201,9 @@ func TestDesyncFreedomThreads(t *testing.T) {
 	}
 
 	assert.True(t, success, lastErr)
+
+	if *keepProxyAlive {
+		t.Log("Proxy is running on port 10808 (desync) and 10809 (no desync). Press Ctrl+C to exit.")
+		select {}
+	}
 }
