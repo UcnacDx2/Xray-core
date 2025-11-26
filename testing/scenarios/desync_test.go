@@ -168,13 +168,13 @@ func TestDesyncFreedomThreads(t *testing.T) {
 	var lastErr error
 	success := false
 	for _, url := range urls {
-		_, err := httpClientDesync.Get(url)
+		_, err := httpClientNoDesync.Get(url)
 		if err == nil {
 			success = true
 			continue
 		}
 
-		_, err = httpClientNoDesync.Get(url)
+		_, err = httpClientDesync.Get(url)
 		if err == nil {
 			success = true
 			continue
