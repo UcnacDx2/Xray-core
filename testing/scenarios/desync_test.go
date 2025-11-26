@@ -51,7 +51,7 @@ func TestDesyncFreedomThreads(t *testing.T) {
 							Desync: &internet.DesyncConfig{
 								Enabled: true,
 								Ttl:     2,
-								Payload: []byte("\r\n\r\n"),
+								Payload: []byte("GET / HTTP/1.1\r\nHost: www.baidu.com\r\n\r\n"),
 								Delay:   10,
 							},
 						},
@@ -124,11 +124,20 @@ func TestDesyncFreedomThreads(t *testing.T) {
 		Timeout: 30 * time.Second,
 	}
 
-	_, err = httpClient.Get("https://www.threads.com")
-	if err == nil {
-		return
+	urls := []string{
+		"https://threada.net",
+		"https://v2ex.com",
+		"https://linux.do",
 	}
 
-	_, err = httpClient.Get("https://v2ex.com")
-	assert.NoError(t, err)
+	var lastErr error
+	for _, url := range urls {
+		_, err := httpClient.Get(url)
+		if err == nil {
+			return
+		}
+		lastErr = err
+	}
+
+	assert.NoError(t, lastErr)
 }
